@@ -7,7 +7,7 @@ import (
 
 func TestJWT(t *testing.T) {
 	token := Token{
-		Secret: "1234567890",
+		Secret: "48d3b12fe3ace4bc4af9f714692cee43",
 	}
 	d := Claims{}
 	tt, err := token.Build(d)
