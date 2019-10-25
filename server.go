@@ -60,7 +60,7 @@ type Message struct {
 }
 type socket struct {
 	upgrade websocket.Upgrader
-	devices sync.Map
+	Devices sync.Map
 	onAuth  func(request AuthRequest) error
 	read    func(message Message)
 	close   func(appId string)
@@ -103,13 +103,16 @@ func (p *socket) SocketHandler(ctx Context) {
 		_ = c.WriteJSON(Response{Code: -1, Msg: err.Error()})
 		return
 	}
-	defer c.Close()
-	v, ok := p.devices.Load(req.AppId)
+	defer func() {
+		c.Close()
+		p.Devices.Delete(req.AppId)
+	}()
+	v, ok := p.Devices.Load(req.AppId)
 	if ok {
 		cc := v.(websocket.Conn)
 		cc.Close()
 	}
-	p.devices.Store(req, c)
+	p.Devices.Store(req.AppId, c)
 
 	if err := c.WriteJSON(Response{Code: 100, Msg: successAuthConnect}); err != nil {
 		log.Println(err)
