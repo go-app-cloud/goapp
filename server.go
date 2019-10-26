@@ -58,17 +58,18 @@ type Message struct {
 	Type int         `json:"type"`
 	Data interface{} `json:"data"`
 }
-type socket struct {
+type Socket struct {
 	upgrade websocket.Upgrader
 	Devices sync.Map
 	onAuth  func(request AuthRequest) error
 	read    func(message Message)
 	close   func(appId string)
 	connect func(req AuthRequest, conn *websocket.Conn)
+	timer   func(appId string, conn *websocket.Conn)
 }
 
-func BuildSocket(auth func(request AuthRequest) error, connect func(req AuthRequest, conn *websocket.Conn), read func(message Message), close func(appId string)) *socket {
-	so := socket{
+func BuildSocket(auth func(request AuthRequest) error, connect func(req AuthRequest, conn *websocket.Conn), read func(message Message), close func(appId string), timer func(appId string, conn *websocket.Conn)) *Socket {
+	so := Socket{
 		upgrade: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
@@ -78,11 +79,12 @@ func BuildSocket(auth func(request AuthRequest) error, connect func(req AuthRequ
 		close:   close,
 		read:    read,
 		connect: connect,
+		timer:   timer,
 	}
 	return &so
 }
 
-func (p *socket) SocketHandler(ctx Context) {
+func (p *Socket) SocketHandler(ctx Context) {
 	c, err := p.upgrade.Upgrade(ctx.ResponseWriter(), ctx.Request(), nil)
 	if err != nil {
 		log.Print("upgrade:", err)
@@ -104,16 +106,14 @@ func (p *socket) SocketHandler(ctx Context) {
 		return
 	}
 	defer func() {
-		c.Close()
 		p.Devices.Delete(req.AppId)
 	}()
 	v, ok := p.Devices.Load(req.AppId)
 	if ok {
-		cc := v.(websocket.Conn)
+		cc := v.(*websocket.Conn)
 		cc.Close()
 	}
 	p.Devices.Store(req.AppId, c)
-
 	if err := c.WriteJSON(Response{Code: 100, Msg: successAuthConnect}); err != nil {
 		log.Println(err)
 		goto ErrorClose
@@ -123,6 +123,15 @@ func (p *socket) SocketHandler(ctx Context) {
 		log.Print("im set read deadline:", err)
 		goto ErrorClose
 	}
+	go func() {
+		for {
+			if c == nil {
+				return
+			}
+			p.timer(req.AppId, c)
+			<-time.After(time.Second * 5)
+		}
+	}()
 	for {
 		var msg Message
 		if err := c.ReadJSON(&msg); err != nil {
