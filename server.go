@@ -65,10 +65,10 @@ type Socket struct {
 	read    func(conn *websocket.Conn, message Message) error
 	close   func(appId string)
 	connect func(req AuthRequest, conn *websocket.Conn)
-	timer   func(appId string, conn *websocket.Conn)
+	timer   func(appId string, conn *websocket.Conn) error
 }
 
-func BuildSocket(auth func(request AuthRequest) error, connect func(req AuthRequest, conn *websocket.Conn), read func(conn *websocket.Conn, message Message) error, close func(appId string), timer func(appId string, conn *websocket.Conn)) *Socket {
+func BuildSocket(auth func(request AuthRequest) error, connect func(req AuthRequest, conn *websocket.Conn), read func(conn *websocket.Conn, message Message) error, close func(appId string), timer func(appId string, conn *websocket.Conn) error) *Socket {
 	so := Socket{
 		upgrade: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
@@ -128,7 +128,10 @@ func (p *Socket) SocketHandler(ctx Context) {
 			if c == nil {
 				return
 			}
-			p.timer(req.AppId, c)
+			if err := p.timer(req.AppId, c); err != nil {
+				log.Println(err)
+				return
+			}
 			<-time.After(time.Second * 15)
 		}
 	}()
