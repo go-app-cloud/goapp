@@ -62,13 +62,13 @@ type Socket struct {
 	upgrade websocket.Upgrader
 	Devices sync.Map
 	onAuth  func(request AuthRequest) error
-	read    func(message Message)
+	read    func(conn *websocket.Conn, message Message) error
 	close   func(appId string)
 	connect func(req AuthRequest, conn *websocket.Conn)
 	timer   func(appId string, conn *websocket.Conn)
 }
 
-func BuildSocket(auth func(request AuthRequest) error, connect func(req AuthRequest, conn *websocket.Conn), read func(message Message), close func(appId string), timer func(appId string, conn *websocket.Conn)) *Socket {
+func BuildSocket(auth func(request AuthRequest) error, connect func(req AuthRequest, conn *websocket.Conn), read func(conn *websocket.Conn, message Message) error, close func(appId string), timer func(appId string, conn *websocket.Conn)) *Socket {
 	so := Socket{
 		upgrade: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
@@ -129,7 +129,7 @@ func (p *Socket) SocketHandler(ctx Context) {
 				return
 			}
 			p.timer(req.AppId, c)
-			<-time.After(time.Second * 5)
+			<-time.After(time.Second * 15)
 		}
 	}()
 	for {
@@ -137,7 +137,10 @@ func (p *Socket) SocketHandler(ctx Context) {
 		if err := c.ReadJSON(&msg); err != nil {
 			goto ErrorClose
 		}
-		p.read(msg)
+		if err := p.read(c, msg); err != nil {
+			log.Println(err)
+			goto ErrorClose
+		}
 	}
 ErrorClose:
 	p.close(req.AppId)
@@ -148,15 +151,17 @@ type SocketClient struct {
 	close  func(socket *SocketClient, uri *url.URL)
 	read   func(message json.RawMessage)
 	before func(con *websocket.Conn)
+	timer  func(con *websocket.Conn) error
 	conn   *websocket.Conn
 }
 
-func BuildSocketClient(uri *url.URL, read func(message json.RawMessage), before func(con *websocket.Conn), close func(socket *SocketClient, uri *url.URL)) *SocketClient {
+func BuildSocketClient(uri *url.URL, read func(message json.RawMessage), before func(con *websocket.Conn), close func(socket *SocketClient, uri *url.URL), timer func(con *websocket.Conn) error) *SocketClient {
 	so := SocketClient{
 		uri:    uri,
 		before: before,
 		close:  close,
 		read:   read,
+		timer:  timer,
 	}
 	so.ReConnect()
 	return &so
@@ -175,6 +180,17 @@ func (p *SocketClient) ReConnect() {
 			// pre handler
 			p.before(c)
 			raw := json.RawMessage{}
+			go func() {
+				for {
+					if c == nil {
+						return
+					}
+					if err = p.timer(c); err != nil {
+						return
+					}
+					<-time.After(time.Second * 15)
+				}
+			}()
 			for {
 				if err := p.conn.ReadJSON(&raw); err != nil {
 					log.Println("read:", err)
